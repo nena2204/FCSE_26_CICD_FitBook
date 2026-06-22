@@ -6,7 +6,7 @@ A complete DevOps student project demonstrating a full CI/CD pipeline with Docke
 
 FitBook is a simple yet powerful online training booking system showcasing modern DevOps practices. Users can browse trainers, view available training sessions, and book their preferred training slots.
 
-## 🏗️ Architecture
+## 🏗️ Architecture test
 
 ```
 ┌─────────────────────────────────────────────────────────────┐
