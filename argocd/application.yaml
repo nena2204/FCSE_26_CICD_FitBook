@@ -6,7 +6,7 @@ metadata:
 spec:
   project: default
   source:
-    repoURL: https://github.com/YOUR_USERNAME/fitbook
+    repoURL: https://github.com/nena2204/FCSE_26_CICD_FitBook
     targetRevision: main
     path: kubernetes
   destination:
