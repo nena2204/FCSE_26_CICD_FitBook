@@ -1,5 +1,7 @@
 name: CI/CD Pipeline
 
+permissions:
+  contents: write
 on:
   push:
     branches: [ main, develop ]
@@ -15,24 +17,41 @@ jobs:
   # Test backend
   test-backend:
     runs-on: ubuntu-latest
+
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: fitbook_user
+          POSTGRES_PASSWORD: fitbook_password
+          POSTGRES_DB: fitbook_db
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U fitbook_user -d fitbook_db"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    env:
+      DATABASE_URL: postgresql://fitbook_user:fitbook_password@localhost:5432/fitbook_db
+      DEBUG: "False"
+
     steps:
       - uses: actions/checkout@v4
-      
-      - name: Set up Python
-        uses: actions/setup-python@v4
-        with:
-          python-version: '3.11'
-      
-      - name: Install backend dependencies
-        run: |
-          cd backend
-          pip install -r requirements.txt
-      
-      - name: Run backend tests
-        run: |
-          cd backend
-          pytest test_main.py -v
 
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install backend dependencies
+        working-directory: backend
+        run: pip install -r requirements.txt
+
+      - name: Run backend tests
+        working-directory: backend
+        run: pytest test_main.py -v
   # Test and build frontend
   test-frontend:
     runs-on: ubuntu-latest
@@ -43,16 +62,14 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: '20'
-      
+
       - name: Install frontend dependencies
-        run: |
-          cd frontend
-          npm ci
-      
+        working-directory: frontend
+        run: npm install
+
       - name: Build frontend
-        run: |
-          cd frontend
-          npm run build
+        working-directory: frontend
+        run: npm run build
 
   # Build and push images
   build-and-push:
