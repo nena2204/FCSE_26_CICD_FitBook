@@ -17,7 +17,7 @@ spec:
     spec:
       containers:
       - name: frontend
-        image: DOCKERHUB_USERNAME/fitbook-frontend:IMAGE_TAG_FRONTEND
+        image: nennaa/fitbook-frontend:d1dcd102dea5adcf588151fcbc9b94b358dd0339
         imagePullPolicy: IfNotPresent
         ports:
         - containerPort: 80
