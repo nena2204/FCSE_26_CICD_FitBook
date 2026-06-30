@@ -1,38 +1,51 @@
-from sqlalchemy import Column, Integer, String, Boolean, DateTime, ForeignKey
-from sqlalchemy.orm import relationship
-from datetime import datetime
-from database import Base
+from typing import Any, Dict, Optional
 
 
-class Trainer(Base):
-    __tablename__ = "trainers"
+def serialize_trainer(document: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
+    """Convert a MongoDB trainer document into an API response."""
 
-    id = Column(Integer, primary_key=True, index=True)
-    name = Column(String, index=True)
-    specialization = Column(String)
+    if document is None:
+        return None
 
-    training_slots = relationship("TrainingSlot", back_populates="trainer")
-
-
-class TrainingSlot(Base):
-    __tablename__ = "training_slots"
-
-    id = Column(Integer, primary_key=True, index=True)
-    trainer_id = Column(Integer, ForeignKey("trainers.id"))
-    training_date = Column(DateTime, index=True)
-    is_available = Column(Boolean, default=True)
-
-    trainer = relationship("Trainer", back_populates="training_slots")
-    bookings = relationship("Booking", back_populates="training_slot")
+    return {
+        "id": str(document["_id"]),
+        "name": document["name"],
+        "specialization": document["specialization"],
+    }
 
 
-class Booking(Base):
-    __tablename__ = "bookings"
+def serialize_training_slot(
+    document: Optional[Dict[str, Any]],
+    trainer: Optional[Dict[str, Any]] = None,
+) -> Optional[Dict[str, Any]]:
+    """Convert a MongoDB training-slot document into an API response."""
 
-    id = Column(Integer, primary_key=True, index=True)
-    client_name = Column(String, index=True)
-    training_slot_id = Column(Integer, ForeignKey("training_slots.id"))
-    created_at = Column(DateTime, default=datetime.utcnow)
+    if document is None:
+        return None
 
-    training_slot = relationship("TrainingSlot", back_populates="bookings")
+    return {
+        "id": str(document["_id"]),
+        "trainer_id": str(document["trainer_id"]),
+        "training_date": document["training_date"],
+        "is_available": document.get("is_available", True),
+        "trainer": serialize_trainer(trainer),
+    }
 
+
+def serialize_booking(
+    document: Optional[Dict[str, Any]],
+    training_slot: Optional[Dict[str, Any]] = None,
+    trainer: Optional[Dict[str, Any]] = None,
+) -> Optional[Dict[str, Any]]:
+    """Convert a MongoDB booking document into an API response."""
+
+    if document is None:
+        return None
+
+    return {
+        "id": str(document["_id"]),
+        "client_name": document["client_name"],
+        "training_slot_id": str(document["training_slot_id"]),
+        "created_at": document["created_at"],
+        "training_slot": serialize_training_slot(training_slot, trainer),
+    }

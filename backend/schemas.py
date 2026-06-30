@@ -1,44 +1,42 @@
-from pydantic import BaseModel
 from datetime import datetime
-from typing import Optional, List
+from typing import Optional
+
+from pydantic import BaseModel, ConfigDict, Field
 
 
-class TrainerBase(BaseModel):
-    name: str
-    specialization: str
+class FitBookSchema(BaseModel):
+    model_config = ConfigDict(
+        str_strip_whitespace=True,
+        extra="forbid",
+    )
+
+
+class TrainerBase(FitBookSchema):
+    name: str = Field(min_length=1, max_length=100)
+    specialization: str = Field(min_length=1, max_length=100)
 
 
 class TrainerResponse(TrainerBase):
-    id: int
-
-    class Config:
-        from_attributes = True
+    id: str
 
 
-class TrainingSlotBase(BaseModel):
-    trainer_id: int
+class TrainingSlotBase(FitBookSchema):
+    trainer_id: str
     training_date: datetime
     is_available: bool = True
 
 
 class TrainingSlotResponse(TrainingSlotBase):
-    id: int
+    id: str
     trainer: Optional[TrainerResponse] = None
 
-    class Config:
-        from_attributes = True
 
-
-class BookingBase(BaseModel):
-    client_name: str
-    training_slot_id: int
+class BookingBase(FitBookSchema):
+    client_name: str = Field(min_length=1, max_length=100)
+    training_slot_id: str
 
 
 class BookingResponse(BookingBase):
-    id: int
+    id: str
     created_at: datetime
     training_slot: Optional[TrainingSlotResponse] = None
-
-    class Config:
-        from_attributes = True
-

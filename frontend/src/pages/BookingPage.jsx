@@ -39,7 +39,7 @@ function BookingPage() {
     }
 
     try {
-      await bookingsAPI.create(clientName, parseInt(selectedSlot))
+      await bookingsAPI.create(clientName, selectedSlot)
       setSuccess('Booking created successfully!')
       setClientName('')
       setSelectedSlot('')

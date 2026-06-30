@@ -1,133 +1,354 @@
+import os
+from datetime import datetime, timedelta, timezone
+
 import pytest
-from fastapi.testclient import TestClient
-from sqlalchemy import create_engine
-from sqlalchemy.orm import sessionmaker
-from datetime import datetime, timedelta
+import pytest_asyncio
+from httpx import ASGITransport, AsyncClient
+from pymongo import AsyncMongoClient
 
-import sys
-sys.path.insert(0, '/app/backend')
-
-from main import app, get_db
-from database import Base
 import crud
-import schemas
-import models
+from database import get_database
+from main import app
+from schemas import TrainerBase, TrainingSlotBase
 
-# Use an in-memory SQLite database for testing
-SQLALCHEMY_DATABASE_URL = "sqlite:///./test.db"
-engine = create_engine(
-    SQLALCHEMY_DATABASE_URL, connect_args={"check_same_thread": False}
+
+TEST_MONGODB_URI = os.getenv(
+    "TEST_MONGODB_URI",
+    os.getenv("MONGODB_URI", "mongodb://localhost:27017"),
 )
-TestingSessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 
-Base.metadata.create_all(bind=engine)
+TEST_MONGO_DB_NAME = os.getenv(
+    "TEST_MONGO_DB_NAME",
+    "fitbook_test_db",
+)
 
 
-def override_get_db():
+@pytest_asyncio.fixture
+async def test_db():
+    """
+    Create a clean MongoDB database for every test.
+    """
+
+    client = AsyncMongoClient(
+        TEST_MONGODB_URI,
+        serverSelectionTimeoutMS=5000,
+    )
+
+    await client.admin.command("ping")
+
+    await client.drop_database(TEST_MONGO_DB_NAME)
+
+    database = client[TEST_MONGO_DB_NAME]
+
+    await crud.create_indexes(database)
+
     try:
-        db = TestingSessionLocal()
-        yield db
+        yield database
     finally:
-        db.close()
+        await client.drop_database(TEST_MONGO_DB_NAME)
+        await client.close()
 
 
-app.dependency_overrides[get_db] = override_get_db
-client = TestClient(app)
+@pytest_asyncio.fixture
+async def api_client(test_db):
+    """
+    Override the application's MongoDB dependency with the test database.
+    """
+
+    def override_get_database():
+        return test_db
+
+    app.dependency_overrides[get_database] = override_get_database
+
+    transport = ASGITransport(app=app)
+
+    async with AsyncClient(
+        transport=transport,
+        base_url="http://test",
+    ) as client:
+        yield client
+
+    app.dependency_overrides.clear()
 
 
-@pytest.fixture(scope="function")
-def db():
-    Base.metadata.create_all(bind=engine)
-    yield TestingSessionLocal()
-    Base.metadata.drop_all(bind=engine)
+async def insert_trainer(test_db):
+    trainer = {
+        "name": "Test Trainer",
+        "specialization": "Strength Training",
+    }
+
+    result = await test_db.trainers.insert_one(trainer)
+
+    trainer["_id"] = result.inserted_id
+
+    return trainer
 
 
-def test_health_endpoint():
-    """Test health check endpoint"""
-    response = client.get("/api/health")
+async def insert_training_slot(test_db, trainer_id):
+    slot = {
+        "trainer_id": trainer_id,
+        "training_date": (
+            datetime.now(timezone.utc)
+            + timedelta(days=1)
+        ),
+        "is_available": True,
+    }
+
+    result = await test_db.training_slots.insert_one(slot)
+
+    slot["_id"] = result.inserted_id
+
+    return slot
+
+
+@pytest.mark.asyncio
+async def test_health_endpoint(api_client):
+    response = await api_client.get("/api/health")
+
     assert response.status_code == 200
-    assert response.json()["status"] == "healthy"
+
+    data = response.json()
+
+    assert data["status"] == "healthy"
+    assert data["database"] == "mongodb"
+    assert "timestamp" in data
 
 
-def test_get_trainers_empty():
-    """Test getting trainers when none exist"""
-    response = client.get("/api/trainers")
+@pytest.mark.asyncio
+async def test_empty_trainers(api_client):
+    response = await api_client.get("/api/trainers")
+
     assert response.status_code == 200
     assert response.json() == []
 
 
-def test_create_and_get_trainer(db):
-    """Test creating and retrieving a trainer"""
-    trainer_data = {"name": "John Doe", "specialization": "Yoga"}
-    trainer = crud.create_trainer(db, schemas.TrainerBase(**trainer_data))
-    
-    assert trainer.id is not None
-    assert trainer.name == "John Doe"
-    assert trainer.specialization == "Yoga"
+@pytest.mark.asyncio
+async def test_create_and_get_trainer(test_db):
+    created = await crud.create_trainer(
+        test_db,
+        TrainerBase(
+            name="Ana Petrova",
+            specialization="Yoga",
+        ),
+    )
+
+    assert created["name"] == "Ana Petrova"
+    assert created["specialization"] == "Yoga"
+    assert isinstance(created["id"], str)
+
+    trainers = await crud.get_trainers(test_db)
+
+    assert len(trainers) == 1
+    assert trainers[0]["id"] == created["id"]
 
 
-def test_create_booking_success(db):
-    """Test creating a booking successfully"""
-    # Create trainer
-    trainer = crud.create_trainer(db, schemas.TrainerBase(
-        name="Jane Smith",
-        specialization="Pilates"
-    ))
-    
-    # Create training slot
-    slot_date = datetime.utcnow() + timedelta(days=7)
-    slot = crud.create_training_slot(db, schemas.TrainingSlotBase(
-        trainer_id=trainer.id,
-        training_date=slot_date,
-        is_available=True
-    ))
-    
-    # Create booking
-    booking = crud.create_booking(db, schemas.BookingBase(
-        client_name="Alice",
-        training_slot_id=slot.id
-    ))
-    
-    assert booking is not None
-    assert booking.client_name == "Alice"
-    
-    # Check that slot is no longer available
-    updated_slot = crud.get_training_slot(db, slot.id)
-    assert updated_slot.is_available == False
+@pytest.mark.asyncio
+async def test_create_training_slot(test_db):
+    trainer = await crud.create_trainer(
+        test_db,
+        TrainerBase(
+            name="Marko Markov",
+            specialization="CrossFit",
+        ),
+    )
+
+    slot = await crud.create_training_slot(
+        test_db,
+        TrainingSlotBase(
+            trainer_id=trainer["id"],
+            training_date=(
+                datetime.now(timezone.utc)
+                + timedelta(days=1)
+            ),
+            is_available=True,
+        ),
+    )
+
+    assert slot is not None
+    assert isinstance(slot["id"], str)
+    assert slot["trainer_id"] == trainer["id"]
+    assert slot["is_available"] is True
+    assert slot["trainer"]["name"] == "Marko Markov"
 
 
-def test_cancel_booking(db):
-    """Test cancelling a booking"""
-    # Create trainer and slot
-    trainer = crud.create_trainer(db, schemas.TrainerBase(
-        name="Bob",
-        specialization="CrossFit"
-    ))
-    
-    slot_date = datetime.utcnow() + timedelta(days=1)
-    slot = crud.create_training_slot(db, schemas.TrainingSlotBase(
-        trainer_id=trainer.id,
-        training_date=slot_date,
-        is_available=True
-    ))
-    
-    # Create booking
-    booking = crud.create_booking(db, schemas.BookingBase(
-        client_name="Charlie",
-        training_slot_id=slot.id
-    ))
-    
-    # Slot should be unavailable
-    assert crud.get_training_slot(db, slot.id).is_available == False
-    
-    # Cancel booking
-    success = crud.delete_booking(db, booking.id)
-    assert success == True
-    
-    # Slot should be available again
-    assert crud.get_training_slot(db, slot.id).is_available == True
+@pytest.mark.asyncio
+async def test_get_available_slots(api_client, test_db):
+    trainer = await insert_trainer(test_db)
+    slot = await insert_training_slot(
+        test_db,
+        trainer["_id"],
+    )
+
+    response = await api_client.get(
+        "/api/slots/available"
+    )
+
+    assert response.status_code == 200
+
+    data = response.json()
+
+    assert len(data) == 1
+    assert data[0]["id"] == str(slot["_id"])
+    assert data[0]["is_available"] is True
+    assert data[0]["trainer"]["name"] == "Test Trainer"
 
 
-if __name__ == "__main__":
-    pytest.main([__file__, "-v"])
+@pytest.mark.asyncio
+async def test_successful_booking(api_client, test_db):
+    trainer = await insert_trainer(test_db)
+    slot = await insert_training_slot(
+        test_db,
+        trainer["_id"],
+    )
 
+    response = await api_client.post(
+        "/api/bookings",
+        json={
+            "client_name": "Nena Test",
+            "training_slot_id": str(slot["_id"]),
+        },
+    )
+
+    assert response.status_code == 201
+
+    booking = response.json()
+
+    assert isinstance(booking["id"], str)
+    assert booking["client_name"] == "Nena Test"
+    assert booking["training_slot_id"] == str(slot["_id"])
+    assert booking["training_slot"]["trainer"]["name"] == (
+        "Test Trainer"
+    )
+
+    stored_slot = await test_db.training_slots.find_one(
+        {"_id": slot["_id"]}
+    )
+
+    assert stored_slot["is_available"] is False
+
+
+@pytest.mark.asyncio
+async def test_second_booking_is_rejected(
+    api_client,
+    test_db,
+):
+    trainer = await insert_trainer(test_db)
+    slot = await insert_training_slot(
+        test_db,
+        trainer["_id"],
+    )
+
+    first_response = await api_client.post(
+        "/api/bookings",
+        json={
+            "client_name": "First Client",
+            "training_slot_id": str(slot["_id"]),
+        },
+    )
+
+    second_response = await api_client.post(
+        "/api/bookings",
+        json={
+            "client_name": "Second Client",
+            "training_slot_id": str(slot["_id"]),
+        },
+    )
+
+    assert first_response.status_code == 201
+    assert second_response.status_code == 409
+
+    bookings_count = await test_db.bookings.count_documents({})
+
+    assert bookings_count == 1
+
+
+@pytest.mark.asyncio
+async def test_get_bookings(api_client, test_db):
+    trainer = await insert_trainer(test_db)
+    slot = await insert_training_slot(
+        test_db,
+        trainer["_id"],
+    )
+
+    create_response = await api_client.post(
+        "/api/bookings",
+        json={
+            "client_name": "Booking Client",
+            "training_slot_id": str(slot["_id"]),
+        },
+    )
+
+    assert create_response.status_code == 201
+
+    response = await api_client.get("/api/bookings")
+
+    assert response.status_code == 200
+
+    bookings = response.json()
+
+    assert len(bookings) == 1
+    assert bookings[0]["client_name"] == "Booking Client"
+    assert bookings[0]["training_slot"]["trainer"]["name"] == (
+        "Test Trainer"
+    )
+
+
+@pytest.mark.asyncio
+async def test_cancel_booking(api_client, test_db):
+    trainer = await insert_trainer(test_db)
+    slot = await insert_training_slot(
+        test_db,
+        trainer["_id"],
+    )
+
+    create_response = await api_client.post(
+        "/api/bookings",
+        json={
+            "client_name": "Cancellation Client",
+            "training_slot_id": str(slot["_id"]),
+        },
+    )
+
+    booking_id = create_response.json()["id"]
+
+    delete_response = await api_client.delete(
+        f"/api/bookings/{booking_id}"
+    )
+
+    assert delete_response.status_code == 200
+    assert delete_response.json()["detail"] == (
+        "Booking cancelled successfully"
+    )
+
+    bookings_count = await test_db.bookings.count_documents({})
+
+    assert bookings_count == 0
+
+    stored_slot = await test_db.training_slots.find_one(
+        {"_id": slot["_id"]}
+    )
+
+    assert stored_slot["is_available"] is True
+
+
+@pytest.mark.asyncio
+async def test_invalid_booking_id_returns_404(api_client):
+    response = await api_client.delete(
+        "/api/bookings/not-a-valid-object-id"
+    )
+
+    assert response.status_code == 404
+    assert response.json()["detail"] == "Booking not found"
+
+
+@pytest.mark.asyncio
+async def test_missing_slot_booking_returns_409(api_client):
+    response = await api_client.post(
+        "/api/bookings",
+        json={
+            "client_name": "Missing Slot Client",
+            "training_slot_id": "507f1f77bcf86cd799439011",
+        },
+    )
+
+    assert response.status_code == 409

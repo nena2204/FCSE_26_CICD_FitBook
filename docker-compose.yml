@@ -1,24 +1,181 @@
 services:
-  postgres:
-    image: postgres:16-alpine
-    container_name: fitbook-postgres
+  mongo-keyfile-init:
+    image: alpine:3.20
+    container_name: fitbook-mongo-keyfile-init
+    restart: "no"
+    user: "0:0"
     environment:
-      POSTGRES_USER: ${DB_USER}
-      POSTGRES_PASSWORD: ${DB_PASSWORD}
-      POSTGRES_DB: ${DB_NAME}
-    ports:
-      - "5432:5432"
+      MONGO_REPLICA_KEY: ${MONGO_REPLICA_KEY}
     volumes:
-      - postgres_data:/var/lib/postgresql/data
+      - mongo_keyfile:/keyfile
+    command:
+      - /bin/sh
+      - -ec
+      - |
+        test -n "$${MONGO_REPLICA_KEY}"
+        mkdir -p /keyfile
+        printf '%s\n' "$${MONGO_REPLICA_KEY}" > /keyfile/keyfile
+        chown 999:999 /keyfile/keyfile
+        chmod 0400 /keyfile/keyfile
+        echo "MongoDB keyfile created:"
+        ls -ln /keyfile/keyfile
+        wc -c /keyfile/keyfile
+  mongo1:
+    image: mongo:8.0
+    container_name: fitbook-mongo1
+    restart: unless-stopped
+    command:
+      - mongod
+      - --replSet
+      - ${MONGO_REPLICA_SET}
+      - --bind_ip_all
+      - --keyFile
+      - /etc/mongo-keyfile/keyfile
+    environment:
+      MONGO_INITDB_ROOT_USERNAME: ${MONGO_ROOT_USERNAME}
+      MONGO_INITDB_ROOT_PASSWORD: ${MONGO_ROOT_PASSWORD}
+    ports:
+      - "27017:27017"
+    volumes:
+      - mongo1_data:/data/db
+      - mongo_keyfile:/etc/mongo-keyfile:ro
+    depends_on:
+      mongo-keyfile-init:
+        condition: service_completed_successfully
     healthcheck:
       test:
         [
           "CMD-SHELL",
-          "pg_isready -U ${DB_USER:-fitbook_user} -d ${DB_NAME:-fitbook_db}"
+          "mongosh --quiet --eval \"db.adminCommand({ ping: 1 }).ok\" | grep 1"
         ]
-      interval: 10s
+      interval: 5s
       timeout: 5s
-      retries: 5
+      retries: 30
+      start_period: 10s
+    networks:
+      - fitbook-network
+
+  mongo2:
+    image: mongo:8.0
+    container_name: fitbook-mongo2
+    restart: unless-stopped
+    command:
+      - mongod
+      - --replSet
+      - ${MONGO_REPLICA_SET}
+      - --bind_ip_all
+      - --keyFile
+      - /etc/mongo-keyfile/keyfile
+    ports:
+      - "27018:27017"
+    volumes:
+      - mongo2_data:/data/db
+      - mongo_keyfile:/etc/mongo-keyfile:ro
+    depends_on:
+      mongo-keyfile-init:
+        condition: service_completed_successfully
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "mongosh --quiet --eval \"db.adminCommand({ ping: 1 }).ok\" | grep 1"
+        ]
+      interval: 5s
+      timeout: 5s
+      retries: 30
+      start_period: 10s
+    networks:
+      - fitbook-network
+
+  mongo3:
+    image: mongo:8.0
+    container_name: fitbook-mongo3
+    restart: unless-stopped
+    command:
+      - mongod
+      - --replSet
+      - ${MONGO_REPLICA_SET}
+      - --bind_ip_all
+      - --keyFile
+      - /etc/mongo-keyfile/keyfile
+    ports:
+      - "27019:27017"
+    volumes:
+      - mongo3_data:/data/db
+      - mongo_keyfile:/etc/mongo-keyfile:ro
+    depends_on:
+      mongo-keyfile-init:
+        condition: service_completed_successfully
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "mongosh --quiet --eval \"db.adminCommand({ ping: 1 }).ok\" | grep 1"
+        ]
+      interval: 5s
+      timeout: 5s
+      retries: 30
+      start_period: 10s
+    networks:
+      - fitbook-network
+
+  mongo-init:
+    image: mongo:8.0
+    container_name: fitbook-mongo-init
+    restart: "no"
+
+    environment:
+      MONGO_ROOT_USERNAME: ${MONGO_ROOT_USERNAME}
+      MONGO_ROOT_PASSWORD: ${MONGO_ROOT_PASSWORD}
+      MONGO_APP_USERNAME: ${MONGO_APP_USERNAME}
+      MONGO_APP_PASSWORD: ${MONGO_APP_PASSWORD}
+      MONGO_DB_NAME: ${MONGO_DB_NAME}
+      MONGO_REPLICA_SET: ${MONGO_REPLICA_SET}
+
+    volumes:
+      - ./docker/mongo-init.js:/scripts/mongo-init.js:ro
+
+    depends_on:
+      mongo1:
+        condition: service_healthy
+      mongo2:
+        condition: service_healthy
+      mongo3:
+        condition: service_healthy
+
+    entrypoint:
+      - /bin/bash
+      - -ec
+
+    command:
+      - |
+        echo "Waiting for MongoDB..."
+
+        until mongosh "mongodb://$${MONGO_ROOT_USERNAME}:$${MONGO_ROOT_PASSWORD}@mongo1:27017/admin?directConnection=true" --quiet --eval 'db.adminCommand({ ping: 1 }).ok' | grep -q 1; do
+          echo "MongoDB is not ready yet..."
+          sleep 2
+        done
+
+        echo "MongoDB is ready."
+        echo "Initializing replica set..."
+
+        mongosh "mongodb://$${MONGO_ROOT_USERNAME}:$${MONGO_ROOT_PASSWORD}@mongo1:27017/admin?directConnection=true" --file /scripts/mongo-init.js
+
+    networks:
+      - fitbook-network
+
+  seed:
+    image: fitbook-backend:local
+    container_name: fitbook-seed
+    restart: "no"
+    environment:
+      MONGODB_URI: ${MONGODB_URI}
+      MONGO_DB_NAME: ${MONGO_DB_NAME}
+      DEBUG: ${DEBUG:-False}
+    command: [ "python", "init_sample_data.py" ]
+    depends_on:
+      mongo-init:
+        condition: service_completed_successfully
     networks:
       - fitbook-network
 
@@ -26,49 +183,68 @@ services:
     build:
       context: ./backend
       dockerfile: Dockerfile
+    image: fitbook-backend:local
     container_name: fitbook-backend
+    restart: unless-stopped
     environment:
-      DATABASE_URL: postgresql://${DB_USER:-fitbook_user}:${DB_PASSWORD:-fitbook_password}@postgres:5432/${DB_NAME:-fitbook_db}
-      DEBUG: "False"
+      MONGODB_URI: ${MONGODB_URI}
+      MONGO_DB_NAME: ${MONGO_DB_NAME}
+      DEBUG: ${DEBUG:-False}
     ports:
       - "8000:8000"
     depends_on:
-      postgres:
-        condition: service_healthy
-    volumes:
-      - ./backend:/app
+      seed:
+        condition: service_completed_successfully
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "python",
+          "-c",
+          "import urllib.request; urllib.request.urlopen('http://localhost:8000/api/health', timeout=5)"
+        ]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 20s
     networks:
       - fitbook-network
-    healthcheck:
-      test: [ "CMD", "curl", "-f", "http://localhost:8000/api/health" ]
-      interval: 30s
-      timeout: 10s
-      retries: 3
-      start_period: 40s
 
   frontend:
     build:
       context: ./frontend
       dockerfile: Dockerfile
+    image: fitbook-frontend:local
     container_name: fitbook-frontend
+    restart: unless-stopped
     ports:
       - "3000:80"
     depends_on:
-      - backend
-    networks:
-      - fitbook-network
+      backend:
+        condition: service_healthy
     healthcheck:
-      test: [ "CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost/" ]
+      test:
+        [
+          "CMD",
+          "wget",
+          "--quiet",
+          "--tries=1",
+          "--spider",
+          "http://localhost/"
+        ]
       interval: 30s
       timeout: 10s
-      retries: 3
-      start_period: 5s
+      retries: 5
+      start_period: 10s
+    networks:
+      - fitbook-network
 
 volumes:
-  postgres_data:
-    driver: local
+  mongo1_data:
+  mongo2_data:
+  mongo3_data:
+  mongo_keyfile:
 
 networks:
   fitbook-network:
     driver: bridge
-
