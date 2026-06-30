@@ -1,0 +1,26 @@
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: fitbook-azure
+  namespace: argocd
+spec:
+  project: default
+  source:
+    repoURL: https://github.com/nena2204/FCSE_26_CICD_FitBook
+    targetRevision: main
+    path: kubernetes-azure
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: fitbook
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true
+  retry:
+    limit: 5
+    backoff:
+      duration: 5s
+      factor: 2
+      maxDuration: 3m
