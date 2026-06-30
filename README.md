@@ -501,7 +501,4 @@ Created for student DevOps projects.
 - Verify repository access and branch
 - Check Argo CD logs: `kubectl logs -n argocd deployment/argocd-application-controller`
 
----
-
-**Happy Learning! 🎓**
 
