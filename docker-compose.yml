@@ -3,9 +3,9 @@ services:
     image: postgres:16-alpine
     container_name: fitbook-postgres
     environment:
-      POSTGRES_USER: ${DB_USER:-fitbook_user}
-      POSTGRES_PASSWORD: ${DB_PASSWORD:-fitbook_password}
-      POSTGRES_DB: ${DB_NAME:-fitbook_db}
+      POSTGRES_USER: ${DB_USER}
+      POSTGRES_PASSWORD: ${DB_PASSWORD}
+      POSTGRES_DB: ${DB_NAME}
     ports:
       - "5432:5432"
     volumes:
