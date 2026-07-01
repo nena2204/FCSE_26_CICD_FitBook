@@ -218,29 +218,33 @@ jobs:
           sed -i \
             "s|imagePullPolicy: Never|imagePullPolicy: IfNotPresent|g" \
             kubernetes/frontend-deployment.yaml
+          sed -i -E \
+            "s|^([[:space:]]*)image: .*fitbook-backend.*|\1image: ${BACKEND_IMAGE}:${GITHUB_SHA}|" \
+            kubernetes/mongodb-seed-job.yaml
 
-          echo "Updated backend image:"
-          grep "image:" kubernetes/backend-deployment.yaml
+  echo "Updated backend image:"
+  grep "image:" kubernetes/backend-deployment.yaml
+  
+  echo "Updated frontend image:"
+  grep "image:" kubernetes/frontend-deployment.yaml
 
-          echo "Updated frontend image:"
-          grep "image:" kubernetes/frontend-deployment.yaml
-
-      - name: Commit updated Kubernetes manifests
-        run: |
-          if git diff --quiet; then
-            echo "No Kubernetes image changes."
-            exit 0
-          fi
-
-          git config user.name "GitHub Actions"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
-
-          git add \
-            kubernetes/backend-deployment.yaml \
-            kubernetes/frontend-deployment.yaml
-
-          git commit \
-            -m "Deploy images ${GITHUB_SHA} [skip ci]"
-
-          git pull --rebase origin main
-          git push origin main
+  - name: Commit updated Kubernetes manifests
+    run: |
+      if git diff --quiet; then
+        echo "No Kubernetes image changes."
+        exit 0
+      fi
+      
+      git config user.name "GitHub Actions"
+      git config user.email "github-actions[bot]@users.noreply.github.com"
+      
+      git add \
+        kubernetes/backend-deployment.yaml \
+        kubernetes/frontend-deployment.yaml \
+        kubernetes/mongodb-seed-job.yaml
+      
+      git commit \
+        -m "Deploy images ${GITHUB_SHA} [skip ci]"
+      
+      git pull --rebase origin main
+      git push origin main

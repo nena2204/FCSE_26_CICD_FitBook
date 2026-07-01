@@ -17,8 +17,8 @@ spec:
 
       containers:
         - name: mongodb-seed
-          image: fitbook-backend:local
-          imagePullPolicy: Never
+          image: nennaa/fitbook-backend:latest
+          imagePullPolicy: IfNotPresent
 
           command:
             - python
