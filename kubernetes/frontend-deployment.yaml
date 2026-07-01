@@ -17,8 +17,8 @@ spec:
     spec:
       containers:
       - name: frontend
-        image: nennaa/fitbook-frontend:d1dcd102dea5adcf588151fcbc9b94b358dd0339
-        imagePullPolicy: IfNotPresent
+        image: fitbook-frontend:local
+        imagePullPolicy: Never
         ports:
         - containerPort: 80
         readinessProbe:

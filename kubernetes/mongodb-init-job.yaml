@@ -1,0 +1,199 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: mongodb-init
+  namespace: fitbook
+
+spec:
+  backoffLimit: 3
+
+  template:
+    metadata:
+      labels:
+        app: mongodb-init
+
+    spec:
+      restartPolicy: OnFailure
+
+      containers:
+        - name: mongodb-init
+          image: mongo:8.0
+          imagePullPolicy: IfNotPresent
+
+          env:
+            - name: MONGO_ROOT_USERNAME
+              valueFrom:
+                secretKeyRef:
+                  name: fitbook-mongodb-secret
+                  key: MONGO_ROOT_USERNAME
+
+            - name: MONGO_ROOT_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: fitbook-mongodb-secret
+                  key: MONGO_ROOT_PASSWORD
+
+            - name: MONGO_APP_USERNAME
+              valueFrom:
+                secretKeyRef:
+                  name: fitbook-mongodb-secret
+                  key: MONGO_APP_USERNAME
+
+            - name: MONGO_APP_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: fitbook-mongodb-secret
+                  key: MONGO_APP_PASSWORD
+
+            - name: MONGO_DB_NAME
+              valueFrom:
+                configMapKeyRef:
+                  name: fitbook-config
+                  key: MONGO_DB_NAME
+
+            - name: MONGO_REPLICA_SET
+              valueFrom:
+                configMapKeyRef:
+                  name: fitbook-config
+                  key: MONGO_REPLICA_SET
+
+          command:
+            - /bin/bash
+            - -ec
+
+          args:
+            - |
+              HOST0="mongodb-0.mongodb-headless.fitbook.svc.cluster.local:27017"
+              HOST1="mongodb-1.mongodb-headless.fitbook.svc.cluster.local:27017"
+              HOST2="mongodb-2.mongodb-headless.fitbook.svc.cluster.local:27017"
+
+              for host in "$HOST0" "$HOST1" "$HOST2"; do
+                until mongosh "mongodb://${host}/admin?directConnection=true" \
+                  --quiet \
+                  --eval 'db.adminCommand({ping: 1}).ok' 2>/dev/null |
+                  grep -q 1; do
+
+                  echo "Waiting for ${host}..."
+                  sleep 3
+                done
+              done
+
+              echo "All MongoDB members are reachable."
+
+              DIRECT_URI="mongodb://${HOST0}/admin?directConnection=true"
+
+              mongosh "$DIRECT_URI" --quiet --eval '
+                try {
+                  const status = rs.status();
+
+                  if (status.ok === 1) {
+                    print("Replica set is already initialized.");
+                  }
+                } catch (error) {
+                  if (
+                    error.code === 94 ||
+                    error.codeName === "NotYetInitialized"
+                  ) {
+                    print("Initializing replica set...");
+
+                    printjson(
+                      rs.initiate({
+                        _id: process.env.MONGO_REPLICA_SET,
+                        members: [
+                          {
+                            _id: 0,
+                            host: "mongodb-0.mongodb-headless.fitbook.svc.cluster.local:27017",
+                            priority: 2
+                          },
+                          {
+                            _id: 1,
+                            host: "mongodb-1.mongodb-headless.fitbook.svc.cluster.local:27017",
+                            priority: 1
+                          },
+                          {
+                            _id: 2,
+                            host: "mongodb-2.mongodb-headless.fitbook.svc.cluster.local:27017",
+                            priority: 1
+                          }
+                        ]
+                      })
+                    );
+                  } else {
+                    throw error;
+                  }
+                }
+              '
+
+              RS_URI="mongodb://${HOST0},${HOST1},${HOST2}/admin?replicaSet=${MONGO_REPLICA_SET}"
+
+              for attempt in $(seq 1 60); do
+                RESULT="$(
+                  mongosh "$RS_URI" \
+                    --quiet \
+                    --eval 'db.hello().isWritablePrimary' \
+                    2>/dev/null || true
+                )"
+
+                if echo "$RESULT" | grep -q true; then
+                  echo "MongoDB Primary is ready."
+                  break
+                fi
+
+                if [ "$attempt" -eq 60 ]; then
+                  echo "Primary election timed out."
+                  exit 1
+                fi
+
+                sleep 3
+              done
+
+              mongosh "$RS_URI" --quiet --eval '
+                const adminDb = db.getSiblingDB("admin");
+
+                if (
+                  adminDb.getUser(
+                    process.env.MONGO_ROOT_USERNAME
+                  ) === null
+                ) {
+                  adminDb.createUser({
+                    user: process.env.MONGO_ROOT_USERNAME,
+                    pwd: process.env.MONGO_ROOT_PASSWORD,
+                    roles: [
+                      {
+                        role: "root",
+                        db: "admin"
+                      }
+                    ]
+                  });
+
+                  print("Root user created.");
+                } else {
+                  print("Root user already exists.");
+                }
+
+                const appDb =
+                  db.getSiblingDB(process.env.MONGO_DB_NAME);
+
+                if (
+                  appDb.getUser(
+                    process.env.MONGO_APP_USERNAME
+                  ) === null
+                ) {
+                  appDb.createUser({
+                    user: process.env.MONGO_APP_USERNAME,
+                    pwd: process.env.MONGO_APP_PASSWORD,
+                    roles: [
+                      {
+                        role: "readWrite",
+                        db: process.env.MONGO_DB_NAME
+                      }
+                    ]
+                  });
+
+                  print("Application user created.");
+                } else {
+                  print("Application user already exists.");
+                }
+              '
+
+              echo "MongoDB initialization completed."

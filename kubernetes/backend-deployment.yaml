@@ -1,3 +1,95 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: backend
+  namespace: fitbook
+  labels:
+    app: backend
+
+spec:
+  replicas: 2
+
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 0
+      maxSurge: 1
+
+  selector:
+    matchLabels:
+      app: backend
+
+  template:
+    metadata:
+      labels:
+        app: backend
+
+    spec:
+      containers:
+        - name: backend
+          image: fitbook-backend:local
+          imagePullPolicy: Never
+
+          ports:
+            - name: http
+              containerPort: 8000
+              protocol: TCP
+
+          env:
+            - name: MONGODB_URI
+              valueFrom:
+                secretKeyRef:
+                  name: fitbook-mongodb-secret
+                  key: MONGODB_URI
+
+            - name: MONGO_DB_NAME
+              valueFrom:
+                configMapKeyRef:
+                  name: fitbook-config
+                  key: MONGO_DB_NAME
+
+            - name: DEBUG
+              valueFrom:
+                configMapKeyRef:
+                  name: fitbook-config
+                  key: DEBUG
+
+            - name: PYTHONUNBUFFERED
+              value: "1"
+
+          startupProbe:
+            httpGet:
+              path: /api/health
+              port: http
+            periodSeconds: 5
+            timeoutSeconds: 3
+            failureThreshold: 30
+
+          readinessProbe:
+            httpGet:
+              path: /api/health
+              port: http
+            periodSeconds: 5
+            timeoutSeconds: 3
+            failureThreshold: 6
+
+          livenessProbe:
+            httpGet:
+              path: /api/health
+              port: http
+            initialDelaySeconds: 20
+            periodSeconds: 10
+            timeoutSeconds: 3
+            failureThreshold: 6
+
+          resources:
+            requests:
+              memory: 128Mi
+              cpu: 100m
+            limits:
+              memory: 512Mi
+              cpu: 500m
+
 ---
 apiVersion: v1
 kind: Service
@@ -6,14 +98,18 @@ metadata:
   namespace: fitbook
   labels:
     app: backend
+
 spec:
   type: ClusterIP
-  ports:
-    - port: 8000
-      targetPort: 8000
-      protocol: TCP
+
   selector:
     app: backend
+
+  ports:
+    - name: http
+      port: 8000
+      targetPort: http
+      protocol: TCP
 
 ---
 apiVersion: v1
@@ -25,9 +121,10 @@ metadata:
     app: backend
 spec:
   type: ClusterIP
-  ports:
-    - port: 8000
-      targetPort: 8000
-      protocol: TCP
   selector:
     app: backend
+  ports:
+    - name: http
+      port: 8000
+      targetPort: http
+      protocol: TCP

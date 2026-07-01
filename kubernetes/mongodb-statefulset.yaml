@@ -1,0 +1,137 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: mongodb-headless
+  namespace: fitbook
+  labels:
+    app: mongodb
+spec:
+  clusterIP: None
+  publishNotReadyAddresses: true
+  selector:
+    app: mongodb
+  ports:
+    - name: mongodb
+      port: 27017
+      targetPort: 27017
+
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: mongodb
+  namespace: fitbook
+spec:
+  serviceName: mongodb-headless
+  replicas: 3
+  podManagementPolicy: Parallel
+
+  selector:
+    matchLabels:
+      app: mongodb
+
+  template:
+    metadata:
+      labels:
+        app: mongodb
+
+    spec:
+      terminationGracePeriodSeconds: 30
+
+      initContainers:
+        - name: prepare-keyfile
+          image: busybox:1.36
+
+          command:
+            - /bin/sh
+            - -ec
+            - |
+              cp /secret/keyfile /work/keyfile
+              chown 999:999 /work/keyfile
+              chmod 0400 /work/keyfile
+
+          volumeMounts:
+            - name: mongodb-key-secret
+              mountPath: /secret
+              readOnly: true
+
+            - name: mongodb-keyfile
+              mountPath: /work
+
+      containers:
+        - name: mongodb
+          image: mongo:8.0
+          imagePullPolicy: IfNotPresent
+
+          args:
+            - --replSet
+            - rs0
+            - --bind_ip_all
+            - --keyFile
+            - /etc/mongo-keyfile/keyfile
+
+          ports:
+            - name: mongodb
+              containerPort: 27017
+
+
+
+          volumeMounts:
+            - name: mongodb-data
+              mountPath: /data/db
+
+            - name: mongodb-keyfile
+              mountPath: /etc/mongo-keyfile
+              readOnly: true
+
+          startupProbe:
+            tcpSocket:
+              port: mongodb
+            periodSeconds: 5
+            timeoutSeconds: 3
+            failureThreshold: 60
+
+          readinessProbe:
+            tcpSocket:
+              port: mongodb
+            periodSeconds: 5
+            timeoutSeconds: 3
+            failureThreshold: 6
+
+          livenessProbe:
+            tcpSocket:
+              port: mongodb
+            initialDelaySeconds: 30
+            periodSeconds: 10
+            timeoutSeconds: 3
+            failureThreshold: 6
+
+          resources:
+            requests:
+              memory: 128Mi
+              cpu: 50m
+            limits:
+              memory: 512Mi
+              cpu: 500m
+
+      volumes:
+        - name: mongodb-key-secret
+          secret:
+            secretName: fitbook-mongodb-secret
+            items:
+              - key: MONGO_REPLICA_KEY
+                path: keyfile
+
+        - name: mongodb-keyfile
+          emptyDir: { }
+
+  volumeClaimTemplates:
+    - metadata:
+        name: mongodb-data
+      spec:
+        accessModes:
+          - ReadWriteOnce
+        storageClassName: standard
+        resources:
+          requests:
+            storage: 1Gi

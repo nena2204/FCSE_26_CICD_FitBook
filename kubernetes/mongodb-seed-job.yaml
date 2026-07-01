@@ -1,0 +1,41 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: mongodb-seed
+  namespace: fitbook
+
+spec:
+  backoffLimit: 3
+
+  template:
+    metadata:
+      labels:
+        app: mongodb-seed
+
+    spec:
+      restartPolicy: OnFailure
+
+      containers:
+        - name: mongodb-seed
+          image: fitbook-backend:local
+          imagePullPolicy: Never
+
+          command:
+            - python
+            - init_sample_data.py
+
+          env:
+            - name: MONGODB_URI
+              valueFrom:
+                secretKeyRef:
+                  name: fitbook-mongodb-secret
+                  key: MONGODB_URI
+
+            - name: MONGO_DB_NAME
+              valueFrom:
+                configMapKeyRef:
+                  name: fitbook-config
+                  key: MONGO_DB_NAME
+
+            - name: PYTHONUNBUFFERED
+              value: "1"

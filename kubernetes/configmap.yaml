@@ -4,8 +4,6 @@ metadata:
   name: fitbook-config
   namespace: fitbook
 data:
-  DB_HOST: postgres-service
-  DB_PORT: "5432"
-  DB_NAME: fitbook_db
+  MONGO_DB_NAME: "fitbook_db"
+  MONGO_REPLICA_SET: "rs0"
   DEBUG: "False"
-
