@@ -1,4 +1,4 @@
-apiVersion: apps/v1
+﻿apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: frontend
@@ -57,4 +57,5 @@ spec:
     protocol: TCP
   selector:
     app: frontend
+
 
