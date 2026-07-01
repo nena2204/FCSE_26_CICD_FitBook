@@ -27,7 +27,7 @@ spec:
     spec:
       containers:
         - name: backend
-          image: nennaa/fitbook-backend:623ef796a5fe60535ae3dec306bc15246c0c7bf6
+          image: nennaa/fitbook-backend:0522f01b8719ff80049b5f36a26298a86177ed5d
           imagePullPolicy: IfNotPresent
 
           ports:
