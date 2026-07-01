@@ -17,7 +17,7 @@ spec:
 
       containers:
         - name: mongodb-seed
-          image: nennaa/fitbook-backend:8716bf08d07b8a5983b73e6eec66c30647f13380
+          image: nennaa/fitbook-backend:76c1cf7cbe9550453471a88b99599b0e1f4d2cbc
           imagePullPolicy: IfNotPresent
 
           command:
